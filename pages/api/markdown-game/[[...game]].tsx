@@ -70,7 +70,7 @@ const routes: Record<string, (ctx: Ctx) => Promise<void> | void> = {
         {finishedState ? (
           <text
             x="50%"
-            y="50"
+            y="30"
             fill={finishedState === 'lost' ? COLORS.red : COLORS.green}
             dominantBaseline="middle"
             textAnchor="middle"
@@ -206,8 +206,6 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
     if (m) {
       const data = await syncState.get();
 
-      if (url.includes('board')) console.log('data:', data);
-
       const game =
         Game.decode(data, isValidWord) ||
         new Game(isValidWord, getRandomWord());
@@ -218,6 +216,8 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
         game,
         params: m.params,
         sendSvg: (element) => {
+          console.log({ ...req.headers });
+
           res
             .setHeader('cache-control', 'no-cache,max-age=0')
             .setHeader('content-type', 'image/svg+xml')
