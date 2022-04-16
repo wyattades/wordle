@@ -14,14 +14,17 @@ export class Game {
   static width = 5;
   static height = 6;
 
-  invalidSubmit = false;
+  invalidSubmit: boolean;
 
   constructor(
     private readonly validateWord: ValidateWord,
     private readonly answer: string,
     private prevGuesses: string[] = [],
     private currentGuess = '',
-  ) {}
+    invalidSubmit = false,
+  ) {
+    this.invalidSubmit = invalidSubmit;
+  }
 
   finishedState() {
     if (this.prevGuesses[this.prevGuesses.length - 1] === this.answer)
@@ -135,32 +138,34 @@ export class Game {
     });
   }
 
-  static decode(data: any, validateWord: ValidateWord): Game | null {
-    if (typeof data !== 'string') return null;
-
+  static decode(
+    data: string | Record<string, any> | null | undefined,
+    validateWord: ValidateWord,
+  ): Game | null {
+    if (!data) return null;
     try {
-      const parsed = JSON.parse(
-        Buffer.from(data, 'base64url').toString('ascii'),
-      );
+      if (typeof data === 'string')
+        data = JSON.parse(data) as Record<string, any>;
+
+      if (!Array.isArray(data.prevGuesses)) return null;
 
       return new Game(
         validateWord,
-        parsed.answer,
-        parsed.prevGuesses,
-        parsed.currentGuess,
+        data.answer,
+        data.prevGuesses,
+        data.currentGuess,
+        data.invalidSubmit,
       );
     } catch {}
 
     return null;
   }
   encode() {
-    return Buffer.from(
-      JSON.stringify({
-        answer: this.answer,
-        prevGuesses: this.prevGuesses,
-        currentGuess: this.currentGuess,
-      }),
-      'ascii',
-    ).toString('base64url');
+    return JSON.stringify({
+      answer: this.answer,
+      prevGuesses: this.prevGuesses,
+      currentGuess: this.currentGuess,
+      invalidSubmit: this.invalidSubmit,
+    });
   }
 }

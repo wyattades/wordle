@@ -55,7 +55,7 @@ export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
             finishedState === 'lost' ? 'text-red-500' : 'text-green-600',
           )}
         >
-          {finishedState}
+          {finishedState}!
         </p>
       ) : game.invalidSubmit ? (
         <p className="text-xl mb-4 text-center text-red-500">

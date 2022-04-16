@@ -1,17 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { match as matchRoute } from 'path-to-regexp';
 import { renderToStaticMarkup } from 'react-dom/server';
-import Cookies from 'cookies';
+import { Redis } from '@upstash/redis';
 
 import { Game, LetterState } from 'lib/game';
 import { getRandomWord, isValidWord } from 'lib/wordBank';
+
+const redis = new Redis({
+  url: process.env.UPSTASH_URL!,
+  token: process.env.UPSTASH_TOKEN!,
+});
 
 type Ctx = {
   req: NextApiRequest;
   res: NextApiResponse;
   params: Record<string, string>;
   game: Game;
-  saveAndRedirect: () => void;
+  saveAndRedirect: () => Promise<void>;
   sendSvg: (element: React.ReactElement) => void;
 };
 
@@ -26,30 +31,32 @@ const COLORS = {
 };
 
 const routes: Record<string, (ctx: Ctx) => Promise<void> | void> = {
-  '/press-key/:letter': (ctx) => {
+  '/press-key/:letter': async (ctx) => {
     const letter = ctx.params.letter?.toUpperCase();
 
     console.log('add letter:', letter);
 
     ctx.game.addLetter(letter);
 
-    ctx.saveAndRedirect();
+    await ctx.saveAndRedirect();
   },
-  '/press-backspace': (ctx) => {
+  '/press-backspace': async (ctx) => {
     ctx.game.backspace();
 
-    ctx.saveAndRedirect();
+    await ctx.saveAndRedirect();
   },
   '/press-submit': async (ctx) => {
     await ctx.game.submit();
 
-    ctx.saveAndRedirect();
+    await ctx.saveAndRedirect();
   },
 
   '/assets/board': (ctx) => {
     const finishedState = ctx.game.finishedState();
 
     const asGrid = ctx.game.asGrid();
+
+    const hasMessage = !!finishedState || ctx.game.invalidSubmit;
 
     ctx.sendSvg(
       <svg
@@ -58,7 +65,7 @@ const routes: Record<string, (ctx: Ctx) => Promise<void> | void> = {
         version="1.1"
         fontFamily="sans-serif"
         width={Game.width * 44}
-        height={Game.height * 44 + (finishedState ? 100 : 0)}
+        height={Game.height * 44 + (hasMessage ? 60 : 0)}
       >
         {finishedState ? (
           <text
@@ -67,18 +74,18 @@ const routes: Record<string, (ctx: Ctx) => Promise<void> | void> = {
             fill={finishedState === 'lost' ? COLORS.red : COLORS.green}
             dominantBaseline="middle"
             textAnchor="middle"
-            fontSize="30"
+            fontSize="20"
           >
-            {finishedState.toUpperCase()}
+            {finishedState.toUpperCase()}!
           </text>
         ) : ctx.game.invalidSubmit ? (
           <text
             x="50%"
-            y="50"
+            y="30"
             fill={COLORS.red}
             dominantBaseline="middle"
             textAnchor="middle"
-            fontSize="30"
+            fontSize="20"
           >
             Word not in word list
           </text>
@@ -88,7 +95,7 @@ const routes: Record<string, (ctx: Ctx) => Promise<void> | void> = {
           return (
             <g
               key={y}
-              transform={`translate(0, ${y * 44 + (finishedState ? 100 : 0)})`}
+              transform={`translate(0, ${y * 44 + (hasMessage ? 60 : 0)})`}
             >
               {row.map(({ letter, state }, x) => {
                 const fill =
@@ -166,20 +173,43 @@ const handlers = Object.entries(routes).map(([pattern, handler]) => ({
   handler,
 }));
 
+const syncState = new (class {
+  cacheAt = 0;
+  cached: string | null = null;
+
+  async get() {
+    if (Date.now() - this.cacheAt < 600) {
+      return this.cached;
+    } else {
+      this.cached = null;
+      this.cacheAt = 0;
+    }
+
+    this.cacheAt = Date.now();
+    return (this.cached = await redis.get('wordle-state'));
+  }
+
+  async set(val: string) {
+    this.cacheAt = 0;
+    this.cached = null;
+    await redis.set('wordle-state', val, {
+      ex: 60 * 10, // expire in 10 minutes
+    });
+  }
+})();
+
 const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   const url = req.url!;
 
   for (const h of handlers) {
     const m = h.match(url);
     if (m) {
-      const cookies = new Cookies(req, res, {
-        secure: !isDev,
-      });
+      const data = await syncState.get();
 
-      const cookieState = cookies.get('wordle-state') || null;
+      if (url.includes('board')) console.log('data:', data);
 
       const game =
-        Game.decode(cookieState, isValidWord) ||
+        Game.decode(data, isValidWord) ||
         new Game(isValidWord, getRandomWord());
 
       const ctx: Ctx = {
@@ -193,7 +223,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
             .setHeader('content-type', 'image/svg+xml')
             .send(renderToStaticMarkup(element));
         },
-        saveAndRedirect: () => {
+        saveAndRedirect: async () => {
           let referer: string | undefined;
           try {
             const parsed = req.headers.referer
@@ -205,14 +235,7 @@ const handler = async (req: NextApiRequest, res: NextApiResponse) => {
 
           console.log('referer:', referer);
 
-          cookies.set('wordle-state', game.encode(), {
-            httpOnly: true,
-            secure: !isDev,
-            sameSite: isDev ? 'lax' : 'none',
-            overwrite: true,
-            // domain: 'localhost:3001',
-            // maxAge: // TODO automatic expire?
-          });
+          await syncState.set(game.encode());
 
           res.redirect(
             referer ||
