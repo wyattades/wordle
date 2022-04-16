@@ -76,19 +76,33 @@ export class Game {
     this.currentGuess = this.currentGuess.slice(0, Game.width - 1) + letter;
   }
 
+  letterState(letter: string, letterPos: number) {
+    if (letter === '') return LetterState.Incorrect;
+
+    if (this.answer.charAt(letterPos) === letter) {
+      return LetterState.Correct;
+    } else if (this.answer.includes(letter)) {
+      return LetterState.CorrectLetter;
+    } else {
+      return LetterState.Incorrect;
+    }
+  }
+
   letterStates() {
     const states: Record<string, LetterState> = {};
 
     for (const guess of this.prevGuesses) {
       Array.from({ length: Game.width }).map((_x, x) => {
         const letter = guess.charAt(x);
+        const prev = states[letter];
+        const state = this.letterState(letter, x);
 
-        if (this.answer.charAt(x) === letter) {
+        if (state === LetterState.Correct) {
           states[letter] = LetterState.Correct;
-        } else if (this.answer.includes(letter)) {
-          if (states[letter] !== LetterState.Correct)
+        } else if (state === LetterState.CorrectLetter) {
+          if (prev !== LetterState.Correct)
             states[letter] = LetterState.CorrectLetter;
-        } else if (!states[letter]) {
+        } else if (prev == null) {
           states[letter] = LetterState.Incorrect;
         }
       });
@@ -98,26 +112,25 @@ export class Game {
   }
 
   asGrid() {
-    const letterStates = this.letterStates();
     const currentRow = this.currentRow();
 
     return Array.from({ length: Game.height }).map((_y, y) => {
       const guess =
-        this.prevGuesses.length > y
+        y < currentRow
           ? this.prevGuesses[y]
-          : this.prevGuesses.length === y
+          : y === currentRow
           ? this.currentGuess
-          : '';
+          : null;
 
       return Array.from({ length: Game.width }).map((_x, x) => {
-        const letter = guess.length > x ? guess.charAt(x) : null;
+        const letter = guess?.charAt(x);
 
-        const state: LetterState | null =
+        const state: LetterState =
           y > currentRow || (currentRow === y && this.finishedState())
             ? LetterState.Unanswered
-            : currentRow === y
+            : y === currentRow
             ? LetterState.ActiveRow
-            : (letter != null && letterStates[letter]) || null;
+            : this.letterState(letter ?? '', x);
 
         return { letter, state };
       });
