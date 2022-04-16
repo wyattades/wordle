@@ -6,14 +6,14 @@ import Cookies from 'cookies';
 import { Game, LetterState } from 'lib/game';
 import { getRandomWord, isValidWord } from 'lib/wordBank';
 
-type Handler = (
-  req: NextApiRequest & {
-    params: Record<string, string>;
-    game: Game;
-    save: () => void;
-  },
-  res: NextApiResponse,
-) => Promise<void> | void;
+type Ctx = {
+  req: NextApiRequest;
+  res: NextApiResponse;
+  params: Record<string, string>;
+  game: Game;
+  saveAndRedirect: () => void;
+  sendSvg: (element: React.ReactElement) => void;
+};
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -25,43 +25,33 @@ const COLORS = {
   active_row: '#555',
 };
 
-const referer = isDev
-  ? 'http://localhost:3001/test'
-  : 'https://github.com/wyattades';
-
-const routes: Record<string, Handler> = {
-  '/press-key/:letter': (req, res) => {
-    const letter = req.params.letter?.toUpperCase();
+const routes: Record<string, (ctx: Ctx) => Promise<void> | void> = {
+  '/press-key/:letter': (ctx) => {
+    const letter = ctx.params.letter?.toUpperCase();
 
     console.log('add letter:', letter);
 
-    req.game.addLetter(letter);
+    ctx.game.addLetter(letter);
 
-    req.save();
-
-    res.redirect(referer);
+    ctx.saveAndRedirect();
   },
-  '/press-backspace': (req, res) => {
-    req.game.backspace();
+  '/press-backspace': (ctx) => {
+    ctx.game.backspace();
 
-    req.save();
-
-    res.redirect(referer);
+    ctx.saveAndRedirect();
   },
-  '/press-submit': async (req, res) => {
-    await req.game.submit();
+  '/press-submit': async (ctx) => {
+    await ctx.game.submit();
 
-    req.save();
-
-    res.redirect(referer);
+    ctx.saveAndRedirect();
   },
 
-  '/assets/board': (req, res) => {
-    const finishedState = req.game.finishedState();
+  '/assets/board': (ctx) => {
+    const finishedState = ctx.game.finishedState();
 
-    const asGrid = req.game.asGrid();
+    const asGrid = ctx.game.asGrid();
 
-    const body = renderToStaticMarkup(
+    ctx.sendSvg(
       <svg
         xmlns="http://www.w3.org/2000/svg"
         xmlnsXlink="http://www.w3.org/1999/xlink"
@@ -81,7 +71,7 @@ const routes: Record<string, Handler> = {
           >
             {finishedState.toUpperCase()}
           </text>
-        ) : req.game.invalidSubmit ? (
+        ) : ctx.game.invalidSubmit ? (
           <text
             x="50%"
             y="50"
@@ -131,15 +121,11 @@ const routes: Record<string, Handler> = {
         })}
       </svg>,
     );
-    res
-      .setHeader('cache-control', 'no-cache,max-age=0')
-      .setHeader('content-type', 'image/svg+xml')
-      .send(body);
   },
-  '/assets/key/:letter': (req, res) => {
-    const letter = req.params.letter?.toUpperCase();
+  '/assets/key/:letter': (ctx) => {
+    const letter = ctx.params.letter?.toUpperCase();
 
-    const state = req.game.keyboardLetterState(letter);
+    const state = ctx.game.keyboardLetterState(letter);
 
     const fill =
       state === LetterState.Correct
@@ -148,7 +134,7 @@ const routes: Record<string, Handler> = {
         ? COLORS.yellow
         : COLORS.base;
 
-    const body = renderToStaticMarkup(
+    ctx.sendSvg(
       <svg
         xmlns="http://www.w3.org/2000/svg"
         xmlnsXlink="http://www.w3.org/1999/xlink"
@@ -172,50 +158,72 @@ const routes: Record<string, Handler> = {
         </text>
       </svg>,
     );
-
-    res
-      .setHeader('cache-control', 'no-cache,max-age=0')
-      .setHeader('content-type', 'image/svg+xml')
-      .send(body);
   },
 };
+
 const handlers = Object.entries(routes).map(([pattern, handler]) => ({
   match: matchRoute<Record<string, string>>('/api/markdown-game' + pattern),
   handler,
 }));
 
-const handler: Handler = async (req, res) => {
+const handler = async (req: NextApiRequest, res: NextApiResponse) => {
   const url = req.url!;
 
   for (const h of handlers) {
     const m = h.match(url);
     if (m) {
-      req.params = m.params;
-
       const cookies = new Cookies(req, res, {
         secure: !isDev,
       });
 
       const cookieState = cookies.get('wordle-state') || null;
 
-      req.game =
+      const game =
         Game.decode(cookieState, isValidWord) ||
         new Game(isValidWord, getRandomWord());
 
-      req.save = () => {
-        console.log('referer:', req.headers.referer);
+      const ctx: Ctx = {
+        req,
+        res,
+        game,
+        params: m.params,
+        sendSvg: (element) => {
+          res
+            .setHeader('cache-control', 'no-cache,max-age=0')
+            .setHeader('content-type', 'image/svg+xml')
+            .send(renderToStaticMarkup(element));
+        },
+        saveAndRedirect: () => {
+          let referer: string | undefined;
+          try {
+            const parsed = req.headers.referer
+              ? new URL(req.headers.referer)
+              : null;
+            if (parsed?.pathname && parsed.pathname !== '/')
+              referer = parsed.href;
+          } catch {}
 
-        cookies.set('wordle-state', req.game.encode(), {
-          httpOnly: true,
-          secure: !isDev,
-          sameSite: isDev ? 'lax' : 'none',
-          overwrite: true,
-          // domain: 'localhost:3001',
-          // maxAge: // TODO automatic expire?
-        });
+          console.log('referer:', referer);
+
+          cookies.set('wordle-state', game.encode(), {
+            httpOnly: true,
+            secure: !isDev,
+            sameSite: isDev ? 'lax' : 'none',
+            overwrite: true,
+            // domain: 'localhost:3001',
+            // maxAge: // TODO automatic expire?
+          });
+
+          res.redirect(
+            referer ||
+              (isDev
+                ? 'http://localhost:3001/test'
+                : 'https://github.com/wyattades'),
+          );
+        },
       };
 
-      await h.handler(req, res);
+      await h.handler(ctx);
 
       return;
     }
