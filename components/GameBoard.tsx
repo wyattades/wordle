@@ -30,11 +30,13 @@ const KeyButton: React.FC<
 
 export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
   const gameRef = useRef<Game>();
-  gameRef.current ||= new Game(answer, (word) =>
-    fetch(`/api/validate_word?word=${word}`)
-      .then((res) => res.json())
-      .then((j) => j.valid)
-      .catch(() => false),
+  gameRef.current ||= new Game(
+    (word) =>
+      fetch(`/api/validate_word?word=${word}`)
+        .then((res) => res.json())
+        .then((j) => j.valid)
+        .catch(() => false),
+    answer,
   );
   const game = gameRef.current;
 
@@ -47,7 +49,18 @@ export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
   return (
     <>
       {finishedState ? (
-        <p className="text-xl mb-4 text-center text-red-500">{finishedState}</p>
+        <p
+          className={clsx(
+            'text-xl mb-4 text-center uppercase',
+            finishedState === 'lost' ? 'text-red-500' : 'text-green-600',
+          )}
+        >
+          {finishedState}
+        </p>
+      ) : game.invalidSubmit ? (
+        <p className="text-xl mb-4 text-center text-red-500">
+          Word not in word list
+        </p>
       ) : null}
 
       <div className="mb-16">
@@ -85,9 +98,8 @@ export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
               {y === 2 ? (
                 <KeyButton
                   onClick={async () => {
-                    if ((await game.submit()) === 'invalid') {
-                      alert('Word not in word list');
-                    }
+                    await game.submit();
+
                     update();
                   }}
                 >

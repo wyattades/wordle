@@ -3,22 +3,25 @@ const KEY_ROWS = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
 export enum LetterState {
   Unanswered,
   Incorrect,
-  ActiveRow,
   Correct,
   CorrectLetter,
+  ActiveRow, // not applicable to keyboard keys
 }
+
+type ValidateWord = (word: string) => Promise<boolean> | boolean;
 
 export class Game {
   static width = 5;
   static height = 6;
 
-  constructor(
-    readonly answer: string,
-    readonly validateWord: (word: string) => Promise<boolean>,
-  ) {}
+  invalidSubmit = false;
 
-  prevGuesses: string[] = [];
-  currentGuess = '';
+  constructor(
+    private readonly validateWord: ValidateWord,
+    private readonly answer: string,
+    private prevGuesses: string[] = [],
+    private currentGuess = '',
+  ) {}
 
   finishedState() {
     if (this.prevGuesses[this.prevGuesses.length - 1] === this.answer)
@@ -36,7 +39,12 @@ export class Game {
   async submit() {
     if (!this.canSubmit()) return;
 
-    if (!(await this.validateWord(this.currentGuess))) return 'invalid';
+    if (!(await this.validateWord(this.currentGuess))) {
+      this.invalidSubmit = true;
+      return;
+    } else {
+      this.invalidSubmit = false;
+    }
 
     this.prevGuesses.push(this.currentGuess);
     this.currentGuess = '';
@@ -54,12 +62,14 @@ export class Game {
   backspace() {
     if (this.finishedState()) return;
 
+    this.invalidSubmit = false;
     this.currentGuess = this.currentGuess.slice(0, -1);
   }
 
   addLetter(letter: string) {
     if (this.finishedState()) return;
 
+    this.invalidSubmit = false;
     this.currentGuess = this.currentGuess.slice(0, Game.width - 1) + letter;
   }
 
@@ -111,6 +121,10 @@ export class Game {
     });
   }
 
+  keyboardLetterState(letter: string) {
+    return this.letterStates()[letter] || null;
+  }
+
   keyboard() {
     const letterStates = this.letterStates();
 
@@ -121,7 +135,32 @@ export class Game {
     });
   }
 
-  // TODO:
-  // static fromRequest(req: any) {}
-  // saveToResponse(res: any) {}
+  static decode(data: any, validateWord: ValidateWord): Game | null {
+    if (typeof data !== 'string') return null;
+
+    try {
+      const parsed = JSON.parse(
+        Buffer.from(data, 'base64url').toString('ascii'),
+      );
+
+      return new Game(
+        validateWord,
+        parsed.answer,
+        parsed.prevGuesses,
+        parsed.currentGuess,
+      );
+    } catch {}
+
+    return null;
+  }
+  encode() {
+    return Buffer.from(
+      JSON.stringify({
+        answer: this.answer,
+        prevGuesses: this.prevGuesses,
+        currentGuess: this.currentGuess,
+      }),
+      'ascii',
+    ).toString('base64url');
+  }
 }
