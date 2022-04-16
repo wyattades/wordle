@@ -68,7 +68,7 @@ const routes: Record<string, Handler> = {
         version="1.1"
         fontFamily="sans-serif"
         width={Game.width * 44}
-        height={Game.height * 44 + 100}
+        height={Game.height * 44 + (finishedState ? 100 : 0)}
       >
         {finishedState ? (
           <text
@@ -139,8 +139,6 @@ const routes: Record<string, Handler> = {
   '/assets/key/:letter': (req, res) => {
     const letter = req.params.letter?.toUpperCase();
 
-    console.log('asset letter:', letter);
-
     const state = req.game.keyboardLetterState(letter);
 
     const fill =
@@ -194,7 +192,9 @@ const handler: Handler = async (req, res) => {
     if (m) {
       req.params = m.params;
 
-      const cookies = new Cookies(req, res);
+      const cookies = new Cookies(req, res, {
+        secure: !isDev,
+      });
 
       const cookieState = cookies.get('wordle-state') || null;
 
@@ -203,6 +203,8 @@ const handler: Handler = async (req, res) => {
         new Game(isValidWord, getRandomWord());
 
       req.save = () => {
+        console.log('referer:', req.headers.referer);
+
         cookies.set('wordle-state', req.game.encode(), {
           httpOnly: true,
           secure: !isDev,
