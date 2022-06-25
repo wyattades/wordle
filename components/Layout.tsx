@@ -16,7 +16,16 @@
 const Footer: React.FC = () => {
   return (
     <footer className="flex h-24 w-full items-center justify-center border-t">
-      <span>Powered by ♥</span>
+      <span>
+        Created with ♥ by{' '}
+        <a className="link" href="https://wyattades.com">
+          wyattades
+        </a>
+        .{' '}
+        <a className="link" href="https://github.com/github/wyattades">
+          View source
+        </a>
+      </span>
     </footer>
   );
 };
