@@ -1,24 +1,9 @@
-import type {
-  GetServerSidePropsContext,
-  InferGetServerSidePropsType,
-  NextPage,
-} from 'next';
+import type { NextPage } from 'next';
 
 import { Layout } from 'components/Layout';
 import { GameBoard } from 'components/GameBoard';
-import { getRandomWord } from 'lib/wordBank';
 
-export const getServerSideProps = async (_ctx: GetServerSidePropsContext) => {
-  return {
-    props: {
-      answer: getRandomWord(),
-    },
-  };
-};
-
-const Home: NextPage<
-  InferGetServerSidePropsType<typeof getServerSideProps>
-> = ({ answer }) => {
+const Home: NextPage = () => {
   return (
     <Layout>
       <div
@@ -28,7 +13,7 @@ const Home: NextPage<
         <h1 className="mb-16 text-center text-5xl font-bold">Wordle</h1>
 
         <div className="flex flex-col items-center justify-center">
-          <GameBoard answer={answer} />
+          <GameBoard />
         </div>
       </div>
     </Layout>

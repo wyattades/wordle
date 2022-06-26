@@ -1,3 +1,5 @@
+import { EventEmitter } from 'events';
+
 const KEY_ROWS = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
 
 export enum LetterState {
@@ -8,22 +10,55 @@ export enum LetterState {
   ActiveRow, // not applicable to keyboard keys
 }
 
-type ValidateWord = (word: string) => Promise<boolean> | boolean;
+type ValidateWord = (word: string) => MaybePromise<boolean>;
+
+type SerializedGame = {
+  answer: string;
+  prevGuesses: string[];
+  currentGuess: string;
+  invalidSubmit: boolean;
+};
 
 export class Game {
   static width = 5;
   static height = 6;
 
-  invalidSubmit: boolean;
+  private emitter?: EventEmitter;
 
-  constructor(
-    private readonly validateWord: ValidateWord,
-    private readonly answer: string,
-    private prevGuesses: string[] = [],
-    private currentGuess = '',
+  private answer = '_'.repeat(Game.width);
+  private prevGuesses: string[] = [];
+  private currentGuess = '';
+  invalidSubmit = false;
+  initialized = false;
+
+  constructor(private readonly validateWord: ValidateWord) {}
+
+  init(
+    answer = '_'.repeat(Game.width),
+    prevGuesses: string[] = [],
+    currentGuess = '',
     invalidSubmit = false,
   ) {
+    this.answer = answer;
+    this.prevGuesses = prevGuesses;
+    this.currentGuess = currentGuess;
     this.invalidSubmit = invalidSubmit;
+
+    this.initialized = true;
+    this.emit('init');
+
+    return this;
+  }
+
+  emit(eventName: string) {
+    this.emitter?.emit('event', eventName);
+  }
+  subscribe(cb: (eventName: string) => void) {
+    this.emitter ||= new EventEmitter();
+    this.emitter.on('event', cb);
+    return () => {
+      this.emitter?.off('event', cb);
+    };
   }
 
   finishedState() {
@@ -45,12 +80,13 @@ export class Game {
     if (!(await this.validateWord(this.currentGuess))) {
       this.invalidSubmit = true;
       return;
-    } else {
-      this.invalidSubmit = false;
     }
 
+    this.invalidSubmit = false;
     this.prevGuesses.push(this.currentGuess);
     this.currentGuess = '';
+
+    this.emit('change');
   }
 
   currentRow() {
@@ -67,6 +103,8 @@ export class Game {
 
     this.invalidSubmit = false;
     this.currentGuess = this.currentGuess.slice(0, -1);
+
+    this.emit('change');
   }
 
   addLetter(letter: string) {
@@ -74,6 +112,8 @@ export class Game {
 
     this.invalidSubmit = false;
     this.currentGuess = this.currentGuess.slice(0, Game.width - 1) + letter;
+
+    this.emit('change');
   }
 
   letterState(letter: string, letterPos: number) {
@@ -92,7 +132,7 @@ export class Game {
     const states: Record<string, LetterState> = {};
 
     for (const guess of this.prevGuesses) {
-      Array.from({ length: Game.width }).map((_x, x) => {
+      Array.from({ length: Game.width }).forEach((_x, x) => {
         const letter = guess.charAt(x);
         const prev = states[letter];
         const state = this.letterState(letter, x);
@@ -151,19 +191,14 @@ export class Game {
     });
   }
 
-  static decode(
-    data: string | Record<string, any> | null | undefined,
-    validateWord: ValidateWord,
-  ): Game | null {
+  decode(data: string | SerializedGame | null | undefined): Game | null {
     if (!data) return null;
     try {
-      if (typeof data === 'string')
-        data = JSON.parse(data) as Record<string, any>;
+      if (typeof data === 'string') data = JSON.parse(data) as SerializedGame;
 
       if (!Array.isArray(data.prevGuesses)) return null;
 
-      return new Game(
-        validateWord,
+      return this.init(
         data.answer,
         data.prevGuesses,
         data.currentGuess,
@@ -174,11 +209,12 @@ export class Game {
     return null;
   }
   encode() {
-    return JSON.stringify({
+    const serialized: SerializedGame = {
       answer: this.answer,
       prevGuesses: this.prevGuesses,
       currentGuess: this.currentGuess,
       invalidSubmit: this.invalidSubmit,
-    });
+    };
+    return JSON.stringify(serialized);
   }
 }

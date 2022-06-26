@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
 
 import { Game, LetterState } from 'lib/game';
@@ -8,9 +8,10 @@ const KeyButton: React.FC<
     children: string;
     state?: LetterState | null;
   } & React.ButtonHTMLAttributes<HTMLButtonElement>
-> = ({ children, state, onClick, ...rest }) => {
+> = ({ children, state, onClick, className, ...rest }) => {
   return (
     <button
+      type="button"
       {...rest}
       onClick={onClick}
       className={clsx(
@@ -21,6 +22,7 @@ const KeyButton: React.FC<
           : state === LetterState.CorrectLetter
           ? 'bg-yellow-600 hover:bg-yellow-700'
           : 'bg-gray-700 hover:bg-gray-800',
+        className,
       )}
     >
       {children}
@@ -28,23 +30,72 @@ const KeyButton: React.FC<
   );
 };
 
-export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
+const isValidWord = async (word: string) => {
+  return fetch(`/api/words/valid?word=${encodeURIComponent(word)}`)
+    .then((res) => res.json())
+    .then((j) => !!j.valid)
+    .catch(() => false);
+};
+
+const getRandomWord = async () => {
+  return fetch(`/api/words/random`)
+    .then((res) => res.json())
+    .then((j) => j.word as string);
+};
+
+const syncState = new (class {
+  key = 'wordle-state';
+
+  get() {
+    try {
+      const raw = localStorage.getItem(this.key);
+      return raw ? Buffer.from(raw, 'base64').toString() : null;
+    } catch {}
+    return null;
+  }
+
+  set(val: string) {
+    try {
+      localStorage.setItem(this.key, Buffer.from(val).toString('base64'));
+    } catch {}
+  }
+
+  clear() {
+    try {
+      localStorage.removeItem(this.key);
+    } catch {}
+  }
+})();
+
+export const GameBoard: React.FC = () => {
   const gameRef = useRef<Game>();
-  gameRef.current ||= new Game(
-    (word) =>
-      fetch(`/api/validate_word?word=${word}`)
-        .then((res) => res.json())
-        .then((j) => j.valid)
-        .catch(() => false),
-    answer,
-  );
+  gameRef.current ||= new Game(isValidWord);
   const game = gameRef.current;
 
   const keyboard = game.keyboard();
   const finishedState = game.finishedState();
 
-  const [, setUpdate] = useState(false);
-  const update = () => setUpdate((v) => !v);
+  const [, setUpdate] = useState(0);
+  const update = () => setUpdate((v) => v + 1);
+
+  useEffect(() => {
+    const game_ = gameRef.current!;
+
+    const unsub = game_.subscribe((_eventName) => {
+      update();
+
+      if (game_.finishedState()) syncState.clear();
+      else syncState.set(game_.encode());
+    });
+
+    // initialize after `subscribe`
+    if (!game_.decode(syncState.get()))
+      getRandomWord().then((answer) => {
+        game_.init(answer);
+      });
+
+    return unsub;
+  }, []);
 
   return (
     <>
@@ -99,8 +150,6 @@ export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
                 <KeyButton
                   onClick={async () => {
                     await game.submit();
-
-                    update();
                   }}
                 >
                   Enter
@@ -113,7 +162,6 @@ export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
                     state={state}
                     onClick={() => {
                       game.addLetter(letter);
-                      update();
                     }}
                   >
                     {letter}
@@ -124,7 +172,6 @@ export const GameBoard: React.FC<{ answer: string }> = ({ answer }) => {
                 <KeyButton
                   onClick={() => {
                     game.backspace();
-                    update();
                   }}
                   aria-label="Backspace"
                 >
