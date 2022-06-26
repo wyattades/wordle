@@ -5,18 +5,20 @@ import { Game, LetterState } from 'lib/game';
 import { getRandomWord, isValidWord } from 'lib/wordBank';
 import { buildRouter } from 'lib/router';
 
-const redis = new Redis({
-  url: process.env.UPSTASH_URL!,
-  token: process.env.UPSTASH_TOKEN!,
-});
+const isDev = process.env.NODE_ENV === 'development';
+
+const DEFAULT_REFERER = isDev
+  ? 'http://localhost:3001/test'
+  : 'https://github.com/wyattades';
 
 type Ctx = {
   game: Game;
   saveAndRedirect: () => Promise<void>;
-  sendSvg: (element: React.ReactElement) => void;
+  sendSvg: (
+    element: React.ReactElement,
+    options?: { cacheKey?: string },
+  ) => void;
 };
-
-const isDev = process.env.NODE_ENV === 'development';
 
 const COLORS = {
   green: '#25731a',
@@ -30,6 +32,20 @@ const syncState = new (class {
   cacheAt = 0;
   cached: string | null = null;
 
+  _redis?: Redis;
+  get redis() {
+    if (!this._redis && process.env.UPSTASH_URL && process.env.UPSTASH_TOKEN) {
+      this._redis = new Redis({
+        url: process.env.UPSTASH_URL,
+        token: process.env.UPSTASH_TOKEN,
+      });
+    }
+
+    if (!this._redis) throw new Error('Redis not initialized');
+
+    return this._redis;
+  }
+
   async get() {
     if (Date.now() - this.cacheAt < 600) {
       return this.cached;
@@ -39,13 +55,13 @@ const syncState = new (class {
     }
 
     this.cacheAt = Date.now();
-    return (this.cached = await redis.get('wordle-state'));
+    return (this.cached = await this.redis.get('wordle-state'));
   }
 
   async set(val: string) {
     this.cacheAt = 0;
     this.cached = null;
-    await redis.set('wordle-state', val, {
+    await this.redis.set('wordle-state', val, {
       ex: 60 * 10, // expire in 10 minutes
     });
   }
@@ -186,6 +202,7 @@ export default buildRouter<Ctx>(
             {letter}
           </text>
         </svg>,
+        { cacheKey: `${letter}:${state}` },
       );
     },
   },
@@ -198,9 +215,16 @@ export default buildRouter<Ctx>(
 
     const ctx: Ctx = {
       game,
-      sendSvg: (element) => {
+      sendSvg: (element, { cacheKey } = {}) => {
+        if (cacheKey) {
+          res
+            .setHeader('cache-control', 'max-age=86400, must-revalidate')
+            .setHeader('etag', `"${cacheKey}"`);
+        } else {
+          res.setHeader('cache-control', 'no-cache,max-age=0');
+        }
+
         res
-          .setHeader('cache-control', 'no-cache,max-age=0')
           .setHeader('content-type', 'image/svg+xml')
           .send(renderToStaticMarkup(element));
       },
@@ -218,12 +242,7 @@ export default buildRouter<Ctx>(
 
         await syncState.set(game.encode());
 
-        res.redirect(
-          referer ||
-            (isDev
-              ? 'http://localhost:3001/test'
-              : 'https://github.com/wyattades'),
-        );
+        res.redirect(referer || DEFAULT_REFERER);
       },
     };
 

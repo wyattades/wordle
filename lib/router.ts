@@ -40,12 +40,20 @@ export const buildRouter = <Ctx extends Record<string, unknown> | undefined>(
           params: m.params,
         };
 
-        const ctx = {
-          ...base,
-          ...(extraContext ? await extraContext(base) : {}),
-        } as Ctx extends undefined ? BaseCtx : BaseCtx & Ctx;
+        try {
+          const ctx = {
+            ...base,
+            ...(extraContext ? await extraContext(base) : {}),
+          } as Ctx extends undefined ? BaseCtx : BaseCtx & Ctx;
 
-        await h.handler(ctx);
+          await h.handler(ctx);
+        } catch (err) {
+          console.error(`Request error: ${req.method} ${req.url}`);
+          console.error(err);
+          if (res.writable) {
+            res.status(500).end();
+          }
+        }
 
         return;
       }
